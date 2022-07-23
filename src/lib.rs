@@ -39,17 +39,17 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
         // format! creates temporary String,
         // this is wasteful yet I couldn't find way to get char stream from format!.
         // https://stackoverflow.com/a/24542502
-        let mut label = format!(
+        let label = format!(
             "{number:LW$.PREC$} ",
             LW = cfg.label_bodywidth,
             PREC = cfg.label_precision,
             number = cfg.v_bot + (y as f64) * cfg.v_step,
         );
         let offset = label_margin - label.len(); // label is all ascii, 1 byte per char
-        label.push(if y == 0 {cfg.symbols[0]} else {cfg.symbols[1]});
         for (i,c) in label.chars().enumerate() {
             buffer[y][offset+i] = (c, 9);
         }
+        buffer[y][label_margin] = (cfg.symbols[1], 9); // axis char
     }
 
     // FIXME what about single row?? what about inf values?
@@ -62,6 +62,14 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
 
     for (vs,color) in vss {
         let color = *color;
+
+        if let Some(&v) = vs.get(0) {
+            if let Some(y) = scaled(v) { // what if INF or NAN?
+                buffer[y][offset-1] = (cfg.symbols[0], color);
+                // continued axis char
+            }
+        }
+
         // FIXME use .take(n)
         let vvs = vs[..cfg.width.min(vs.len())].into_iter().cloned().tuple_windows();
         for (x,(v0,v1)) in vvs.enumerate() {
@@ -255,7 +263,7 @@ mod tests {
     // `series` can also be a list of lists to support multiple data series.
     graph_eq!(mountain_valley ? height=Some(4) ;
               [10,20,30,40,30,20,10], [40,30,20,10,20,30,40] => "
- 40.0 ┤╮ ╭╮ ╭
+ 40.0 ┼╮ ╭╮ ╭
  30.0 ┤╰╮╯╰╭╯
  20.0 ┤╭╰╮╭╯╮
  10.0 ┼╯ ╰╯ ╰ ");

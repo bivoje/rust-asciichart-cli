@@ -13,7 +13,10 @@ fn main() {
         v[i] = 15.80001 * (i as f64 * pi * 4.0 / width as f64).sin();
     }
     //let vss = vec![(v,2)];
-    let vss = vec![(vec![2.,2.,2.,2.,2.],2)];
+    let vss = vec![
+        (vec![10.,20.,30.,40.,30.,20.,10.], 2),
+        (vec![40.,30.,20.,10.,20.,30.,40.], 3),
+    ];
 
     let cfg = args.gen_config(&vss).unwrap(); // FIXME
     let ret = plot(&vss, cfg);
