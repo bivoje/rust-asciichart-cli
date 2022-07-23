@@ -10,4 +10,3 @@ description = "provides CUI interface for asciichart library"
 [dependencies]
 clap = { version = "3.2.14", features = ["derive"] }
 itertools = "0.10.3"
-rasciigraph = "0.1.1"
