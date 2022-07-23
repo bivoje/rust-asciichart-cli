@@ -10,9 +10,10 @@ fn main() {
     for i in 0 .. width {
         let pi = std::f64::consts::PI;
         //v[i] = 3000. +  0.000001 * (i as f64 * pi * 4.0 / 120.0).sin();
-        v[i] = 100. + 0.01 * (i as f64 * pi * 4.0 / width as f64).sin();
+        v[i] = 15.80001 * (i as f64 * pi * 4.0 / width as f64).sin();
     }
-    let vss = vec![(v,2)];
+    //let vss = vec![(v,2)];
+    let vss = vec![(vec![2.,2.,2.,2.,2.],2)];
 
     let cfg = args.gen_config(&vss).unwrap(); // FIXME
     let ret = plot(&vss, cfg);

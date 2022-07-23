@@ -12,7 +12,6 @@ pub struct Config {
     // what if w=0 or h=0?
 
     pub v_bot: f64,
-    pub v_top: f64,
     pub v_step: f64,
 
     pub label_bodywidth: usize,
@@ -171,25 +170,27 @@ impl Args {
         let width = self.width.unwrap_or(vss.iter().map(|vs| vs.0.len()).min().unwrap_or(0));
 
         let v_interval = v_top - v_bot; // >= 0
-        let height = self.height.unwrap_or(1 + v_interval.floor() as usize); // >= 1
+        let height = if v_interval == 0. {1} else { // force height to 1 if single-valued
+            self.height.unwrap_or(1 + v_interval.floor() as usize)
+        }; // >= 1
         println!("width:{} height:{}", width, height);
 
         // use integer mode when height is not specified
         let v_step = if height == 1 {0.} else { v_interval / (height-1) as f64 };
-        println!("intv:{} h:{} step:{}", v_interval, height, v_step);
+        println!("intv:{} step:{}", v_interval, v_step);
 
         let label_bodywidth = 1 + v_top.abs().max(v_bot.abs()).log10().floor() as usize;
         let label_precision = {
-            let prec = 1 - v_step.log10().floor() as i32;
+            let signum = if v_step != 0. {v_step} else if v_bot != 0. {v_bot} else {1.};
+            let prec = 1 - signum.log10().floor() as i32;
             (if self.height.is_none() {0} else {1}).max(prec) as usize
             // force prec >= 1 unless height=None (integer mode)
         };
-        // FIXME what if 0???
         println!("<{}>.<{}>", label_bodywidth, label_precision);
 
         let mut cfg = Config {
             symbols: DEFAULT_SYMBOLS,
-            v_bot: v_bot, v_top: v_top, v_step: v_step, width: width, height: height,
+            v_bot: v_bot, v_step: v_step, width: width, height: height,
             label_bodywidth: label_bodywidth, label_precision: label_precision,
         };
 
@@ -201,8 +202,6 @@ impl Args {
     }
 }
 
-
-// FIXME HEIGHT & VSTEP ...
 
 #[cfg(test)]
 mod tests {
@@ -225,8 +224,10 @@ mod tests {
           #[test]
           fn $testname(){
             let vss = vec![$((toSeries!($series),9),)*];
+            #[allow(unused_mut)]
             let mut args = crate::Args::default();
             $(args.$key = $val;),*
+            // FIXME use cfg.$key
             let cfg = args.gen_config(&vss).unwrap();
             let ret = crate::plot(&vss, cfg);
             let ref_line_start = if $rhs.chars().next() == Some('\n') {1} else {0};
@@ -250,7 +251,6 @@ mod tests {
  3.0 ┤ ╭╯  ╰╮
  2.0 ┤╭╯    ╰╮
  1.0 ┼╯      ╰ ");
-
 
     // `series` can also be a list of lists to support multiple data series.
     graph_eq!(mountain_valley ? height=Some(4) ;
@@ -289,8 +289,6 @@ mod tests {
  20.0 ┤╭╯    ╰╮
  10.0 ┼╯      ╰ ");
 
-}
-
     /*
     `format` specifies a Python format string used to format the labels on the
     y-axis. The default value is "{:8.2f} ". This can be used to remove the
@@ -304,8 +302,11 @@ mod tests {
               10 ┼╯      ╰
 
               */
-    //graph_eq!(test_ones  ? ; [1, 1, 1, 1, 1] => " 1.00 ┼────");
-    //graph_eq!(test_zeros ? ; [0, 0, 0, 0, 0] => " 0.00 ┼────");
+    graph_eq!(test_ones  ? ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
+    graph_eq!(test_ones_ ? height=Some(3) ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
+    graph_eq!(test_zeros ? ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
+    graph_eq!(test_zeros_? height=Some(3) ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
+}
 
     /*
     graph_eq!(test_three ? height=None ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
