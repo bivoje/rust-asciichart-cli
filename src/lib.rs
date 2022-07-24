@@ -330,23 +330,21 @@ mod tests {
 
     // `cfg` is an optional dictionary of various parameters to tune the appearance
     // of the chart. `min` and `max` will clamp the y-axis and all values:
-    /*
-        >>> series = [1,2,3,4,_,4,3,2,1]
-        >>> print(plot(series, {'min': 0}))
-            4.00  ┼  ╭╴╶╮
-            3.00  ┤ ╭╯  ╰╮
-            2.00  ┤╭╯    ╰╮
-            1.00  ┼╯      ╰
-            0.00  ┤
-        >>> print(plot(series, {'min': 2}))
-            4.00  ┤  ╭╴╶╮
-            3.00  ┤ ╭╯  ╰╮
-            2.00  ┼─╯    ╰─
-        >>> print(plot(series, {'min': 2, 'max': 3}))
-            3.00  ┤ ╭─╴╶─╮
-            2.00  ┼─╯    ╰─
-    */
+    graph_eq!(ymin0 ? arg.ymin=0. ; [1,2,3,4,_,4,3,2,1] => "
+ 4.0 ┤  ╭╴╶╮
+ 3.0 ┤ ╭╯  ╰╮
+ 2.0 ┤╭╯    ╰╮
+ 1.0 ┼╯      ╰
+ 0.0 ┤         ");
 
+    graph_eq!(ymin1 ? arg.ymin=2. ; [1,2,3,4,_,4,3,2,1] => "
+ 4.0 ┤  ╭╴╶╮
+ 3.0 ┤ ╭╯  ╰╮
+ 2.0 ┤╭╯    ╰╮ ");
+
+    graph_eq!(ymin2 ? arg.ymin=2., arg.ymax=3. ; [1,2,3,4,_,4,3,2,1] => "
+ 3.0 ┤ ╭╯  ╰╮
+ 2.0 ┤╭╯    ╰╮ ");
 
     // `height` specifies the number of rows the graph should occupy. It can be
     // used to scale down a graph with large data values:
