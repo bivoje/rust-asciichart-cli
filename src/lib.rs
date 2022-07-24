@@ -22,9 +22,10 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
     // TODO check if v_step is positive
 
     let label_margin = {
-        let abs_width = cfg.label_bodywidth + 1 + cfg.label_precision; // add 1 for midpoint
-        // left space 1, neg sign 1/0, the number with ljust, right space 1
-        1 + if cfg.v_bot < 0. {1} else {0} + abs_width + 1
+        let abs_width = cfg.label_bodywidth + // add 1 for midpoint if precision is not 0
+            if cfg.label_precision == 0 {0} else { 1 + cfg.label_precision };
+        // left space 1, the number with ljust, right space 1
+        1 + abs_width + 1
     };
 
     let mut buffer = vec![vec![(' ', 9); label_margin + cfg.width]; cfg.height];
@@ -41,13 +42,12 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
         // https://stackoverflow.com/a/24542502
         let label = format!(
             "{number:LW$.PREC$} ",
-            LW = cfg.label_bodywidth,
+            LW = label_margin - 1, // subtract trailing space 1
             PREC = cfg.label_precision,
             number = cfg.v_bot + (y as f64) * cfg.v_step,
         );
-        let offset = label_margin - label.len(); // label is all ascii, 1 byte per char
         for (i,c) in label.chars().enumerate() {
-            buffer[y][offset+i] = (c, 9);
+            buffer[y][i] = (c, 9);
         }
         buffer[y][label_margin] = (cfg.symbols[1], 9); // axis char
     }
@@ -132,6 +132,9 @@ pub struct Args {
     #[clap(long, value_parser, validator=validate_tileset, arg_enum)]
     tileset: Option<String>,
 
+    #[clap(short, long, value_parser)]
+    precision: Option<usize>,
+
     #[clap(short, long, value_parser, arg_enum, default_value_t=Mode::Fast)]
     // FIXME arg_enum attribute makes clap don't require Display implementation on Mode
     // But there's not documentation for that... :/
@@ -187,13 +190,17 @@ impl Args {
         let v_step = if height == 1 {0.} else { v_interval / (height-1) as f64 };
         println!("intv:{} step:{}", v_interval, v_step);
 
-        let label_bodywidth = 1 + v_top.abs().max(v_bot.abs()).log10().floor() as usize;
-        let label_precision = {
+        let label_bodywidth = {
+            let bot_width = 1 + if v_bot < 0. {1} else {0} + v_bot.abs().log10().floor() as usize;
+            let top_width = 1 + if v_top < 0. {1} else {0} + v_top.abs().log10().floor() as usize;
+            bot_width.max(top_width)
+        };
+        let label_precision = self.precision.unwrap_or({
             let signum = if v_step != 0. {v_step} else if v_bot != 0. {v_bot} else {1.};
             let prec = 1 - signum.log10().floor() as i32;
             (if self.height.is_none() {0} else {1}).max(prec) as usize
             // force prec >= 1 unless height=None (integer mode)
-        };
+        });
         println!("<{}>.<{}>", label_bodywidth, label_precision);
 
         let mut cfg = Config {
@@ -213,34 +220,61 @@ impl Args {
 
 #[cfg(test)]
 mod tests {
+    use std::panic;
+    use std::panic::panic_any;
 
     macro_rules! toF64 {
-      (-) => { std::f64::NAN };
+      (_) => { std::f64::NAN };
       (^) => { std::f64::INF };
       (v) => { std::f64::NINF };
       ($num:expr) => { f64::from($num) };
     }
 
     macro_rules! toSeries {
-        ([$($series:tt),*]) => {
-            vec![$(toF64!($series),)*]
+        ([$($v:tt),*]) => {
+            vec![$(toF64!($v),)*]
+        };
+    }
+
+    macro_rules! set_arg {
+        (cfg, $arg:ident, $key:ident, $val:expr) => {
+        };
+        (arg, $arg:ident, $key:ident, $val:expr) => {
+            $arg.$key = $val;
+        };
+    }
+
+    macro_rules! set_cfg {
+        (cfg, $cfg:ident, $key:ident, $val:expr) => {
+            $cfg.$key = $val;
+        };
+        (arg, $cfg:ident, $key:ident, $val:expr) => {
         };
     }
 
     macro_rules! graph_eq {
-        ($testname:ident ? $($key:ident = $val:expr),* ; $($series:tt),* => $rhs:expr) => {
+        ($testname:ident ? $($ctn:ident.$key:ident = $val:expr),* ; $($series:tt),* => $rhs:expr) => {
           #[test]
-          fn $testname(){
+          fn $testname() {
             let vss = vec![$((toSeries!($series),9),)*];
             #[allow(unused_mut)]
-            let mut args = crate::Args::default();
-            $(args.$key = $val;),*
-            // FIXME use cfg.$key
-            let cfg = args.gen_config(&vss).unwrap();
+            let mut arg = crate::Args::default();
+            $(set_arg!($ctn, arg, $key, $val);)*
+            #[allow(unused_mut)]
+            let mut cfg = arg.gen_config(&vss).unwrap();
+            $(set_cfg!($ctn, cfg, $key, $val);)*
             let ret = crate::plot(&vss, cfg);
             let ref_line_start = if $rhs.chars().next() == Some('\n') {1} else {0};
             for (line1, line2) in std::iter::zip(ret.lines(), $rhs[ref_line_start..].lines()) {
-              assert_eq!(line1.trim_end(), line2.trim_end());
+              let result = panic::catch_unwind(|| { // this works like try: clause
+                assert_eq!(line1.trim_end(), line2.trim_end());
+              });
+              if result.is_err() { // this works like catch clause
+                // report whole shape when mismatch occures
+                print!("{}", ret);
+                print!("{}", $rhs);
+                panic_any(result.unwrap_err()); // re-raise
+              }
             }
           }
         };
@@ -253,25 +287,26 @@ mod tests {
         };
     }
 
+
     // Missing data values in the series can be specified as a NaN.
-    graph_eq!(nan_at_top ? height=Some(4) ; [1,2,3,4,-,4,3,2,1] => "
+    graph_eq!(nan_at_top ? arg.height=Some(4) ; [1,2,3,4,_,4,3,2,1] => "
  4.0 ┤  ╭╴╶╮
  3.0 ┤ ╭╯  ╰╮
  2.0 ┤╭╯    ╰╮
  1.0 ┼╯      ╰ ");
 
     // `series` can also be a list of lists to support multiple data series.
-    graph_eq!(mountain_valley ? height=Some(4) ;
+    graph_eq!(mountain_valley ? arg.height=Some(4) ;
               [10,20,30,40,30,20,10], [40,30,20,10,20,30,40] => "
  40.0 ┼╮ ╭╮ ╭
  30.0 ┤╰╮╯╰╭╯
  20.0 ┤╭╰╮╭╯╮
  10.0 ┼╯ ╰╯ ╰ ");
 
-        /*
-    `cfg` is an optional dictionary of various parameters to tune the appearance
-    of the chart. `min` and `max` will clamp the y-axis and all values:
-        >>> series = [1,2,3,4,float("nan"),4,3,2,1]
+    // `cfg` is an optional dictionary of various parameters to tune the appearance
+    // of the chart. `min` and `max` will clamp the y-axis and all values:
+    /*
+        >>> series = [1,2,3,4,_,4,3,2,1]
         >>> print(plot(series, {'min': 0}))
             4.00  ┼  ╭╴╶╮
             3.00  ┤ ╭╯  ╰╮
@@ -285,39 +320,35 @@ mod tests {
         >>> print(plot(series, {'min': 2, 'max': 3}))
             3.00  ┤ ╭─╴╶─╮
             2.00  ┼─╯    ╰─
+    */
 
-            */
 
     // `height` specifies the number of rows the graph should occupy. It can be
     // used to scale down a graph with large data values:
-    graph_eq!(mountain ? height=Some(5) ; [10,20,30,40,50,40,30,20,10] => "
+    graph_eq!(mountain ? arg.height=Some(5) ; [10,20,30,40,50,40,30,20,10] => "
  50.0 ┤   ╭╮
  40.0 ┤  ╭╯╰╮
  30.0 ┤ ╭╯  ╰╮
  20.0 ┤╭╯    ╰╮
  10.0 ┼╯      ╰ ");
 
-    /*
-    `format` specifies a Python format string used to format the labels on the
-    y-axis. The default value is "{:8.2f} ". This can be used to remove the
-    decimal point:
-        >>> series = [10,20,30,40,50,40,30,20,10]
-        >>> print(plot(series, {'height': 4, 'format':'{:8.0f}'}))
-              50 ┤   ╭╮
-              40 ┤  ╭╯╰╮
-              30 ┤ ╭╯  ╰╮
-              20 ┤╭╯    ╰╮
-              10 ┼╯      ╰
+    // `format` specifies a Python format string used to format the labels on the
+    // y-axis. The default value is "{:8.2f} ". This can be used to remove the
+    // decimal point:
+    graph_eq!(precision ? arg.precision=Some(0), arg.height=Some(5) ;
+        [10,20,30,40,50,40,30,20,10] => "
+ 50 ┤   ╭╮
+ 40 ┤  ╭╯╰╮
+ 30 ┤ ╭╯  ╰╮
+ 20 ┤╭╯    ╰╮
+ 10 ┼╯      ╰ ");
 
-              */
     graph_eq!(test_ones  ? ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
-    graph_eq!(test_ones_ ? height=Some(3) ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
+    graph_eq!(test_ones_ ? arg.height=Some(3) ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
     graph_eq!(test_zeros ? ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
-    graph_eq!(test_zeros_? height=Some(3) ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
-}
+    graph_eq!(test_zeros_? arg.height=Some(3) ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
 
-    /*
-    graph_eq!(test_three ? height=None ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
+    graph_eq!(test_three ? arg.height=None ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
  11.0 ┤      ╭╮
  10.0 ┤      ││
   9.0 ┤      ││
@@ -332,12 +363,11 @@ mod tests {
   0.0 ┤   ││
  -1.0 ┤   ││
  -2.0 ┤   ╰╯     ");
-}
 
-    graph_eq!(test_four ? height=None ; [2,1,1,2,(-2),5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] => "
+    graph_eq!(test_four ? arg.height=None ; [2,1,1,2,(-2),5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] => "
  11.0 ┤      ╭╮
  10.0 ┤      ││
-  9.0 ┼      ││    ╭╮
+  9.0 ┤      ││    ╭╮
   8.0 ┤      ││    ││
   7.0 ┤     ╭╯│╭╮  ││
   6.0 ┤     │ │││ ╭╯│ ╭╮  ╭╮
@@ -350,51 +380,46 @@ mod tests {
  -1.0 ┤   ││
  -2.0 ┤   ╰╯                 ");
 
-    graph_eq!(test_five ? [ 2,1,1,2,-2,5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] ?
-                crate::Config::default().with_caption("Plot using asciigraph.".to_string())
-     => " 11.00 ┤      ╭╮
- 10.00 ┤      ││
-  9.00 ┼      ││    ╭╮
-  8.00 ┤      ││    ││
-  7.00 ┤     ╭╯│╭╮  ││
-  6.00 ┤     │ │││ ╭╯│ ╭╮  ╭╮
-  5.00 ┤    ╭╯ │││╭╯ │ ││╭╮││
-  4.00 ┤    │  ││╰╯  ╰╮││││││
-  3.00 ┤    │  ╰╯     ││││╰╯│
-  2.00 ┼╮ ╭╮│         ││││  ╰
-  1.00 ┤╰─╯││         ││╰╯
-  0.00 ┤   ││         ╰╯
- -1.00 ┤   ││
- -2.00 ┤   ╰╯
-          Plot using asciigraph." );
+    graph_eq!(test_five ? ; [2,1,1,2,(-2),5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] => "
+ 11.0 ┤      ╭╮
+ 10.0 ┤      ││
+  9.0 ┤      ││    ╭╮
+  8.0 ┤      ││    ││
+  7.0 ┤     ╭╯│╭╮  ││
+  6.0 ┤     │ │││ ╭╯│ ╭╮  ╭╮
+  5.0 ┤    ╭╯ │││╭╯ │ ││╭╮││
+  4.0 ┤    │  ││╰╯  ╰╮││││││
+  3.0 ┤    │  ╰╯     ││││╰╯│
+  2.0 ┼╮ ╭╮│         ││││  ╰
+  1.0 ┤╰─╯││         ││╰╯
+  0.0 ┤   ││         ╰╯
+ -1.0 ┤   ││
+ -2.0 ┤   ╰╯                 ");
 
-    graph_eq!(test_six ? [0.2,0.1,0.2,2,-0.9,0.7,0.91,0.3,0.7,0.4,0.5] ?
-    crate::Config::default().with_caption("Plot using asciigraph.".to_string())
-    => "  2.00 ┤  ╭╮ ╭╮
+    graph_eq!(test_six ? arg.precision = Some(2) ; [0.2,0.1,0.2,2,(-0.9),0.7,1.28,0.3,0.7,0.4,0.5] => "
+  2.00 ┤  ╭╮ ╭╮
   0.55 ┼──╯│╭╯╰───
- -0.90 ┤   ╰╯
-          Plot using asciigraph." );
+ -0.90 ┤   ╰╯      ");
 
-    graph_eq!(test_seven ? [2,1,1,2,-2,5,7,11,3,7,1] ?
-    crate::Config::default().with_height(4).with_offset(3)
-    => " 11.00 ┤      ╭╮
-  7.75 ┼    ╭─╯│╭╮
-  4.50 ┼╮ ╭╮│  ╰╯│
+    graph_eq!(test_seven ? arg.height=Some(5), arg.precision=Some(2); [3,1,1,3,(-2),5,7,11,3,7,1] => "
+ 11.00 ┤      ╭╮
+  7.75 ┤     ╭╯│╭╮
+  4.50 ┼╮ ╭╮╭╯ ╰╯│
   1.25 ┤╰─╯││    ╰
- -2.00 ┤   ╰╯     "
-    );
+ -2.00 ┤   ╰╯     ");
 
-    graph_eq!(test_eight ? [0.453,0.141,0.951,0.251,0.223,0.581,0.771,0.191,0.393,0.617,0.478]
-    => " 0.95 ┤ ╭╮
- 0.85 ┤ ││  ╭╮
- 0.75 ┤ ││  ││
- 0.65 ┤ ││ ╭╯│ ╭╮
- 0.55 ┤ ││ │ │ │╰
- 0.44 ┼╮││ │ │╭╯
- 0.34 ┤│││ │ ││
- 0.24 ┤││╰─╯ ╰╯
- 0.14 ┤╰╯        ");
+    graph_eq!(test_eight ? arg.height=Some(9) ; [0.453,0.141,0.951,0.251,0.223,0.581,0.771,0.191,0.393,0.617,0.478] => "
+ 0.95 ┤ ╭╮
+ 0.85 ┤ ││
+ 0.75 ┤ ││  ╭╮
+ 0.65 ┤ ││  ││ ╭╮
+ 0.55 ┤ ││ ╭╯│ ││
+ 0.44 ┼╮││ │ │ │╰
+ 0.34 ┤│││ │ │╭╯
+ 0.24 ┤││╰─╯ ││
+ 0.14 ┤╰╯    ╰╯   ");
 
+    /*
     graph_eq!(test_nine ? [0.01, 0.004, 0.003, 0.0042, 0.0083, 0.0033, 0.0079]
     => " 0.010 ┼╮
  0.009 ┤│
@@ -419,90 +444,94 @@ mod tests {
    61 ┤   ││
  -122 ┤   ╰╯     ");
 
-    graph_eq!(test_eleven ? [0.3189989805, 0.149949026, 0.30142492354, 0.195129182935, 0.3142492354,
-    0.1674974513, 0.3142492354, 0.1474974513, 0.3047974513] ?
-    crate::Config::default().with_width(30).with_height(5).with_caption("Plot with custom height & width.".to_string())
-        => " 0.32 ┼╮            ╭─╮     ╭╮     ╭
+    graph_eq!(test_eleven ? height = Some(5) ; [
+        0.3189989805, 0.149949026, 0.30142492354, 0.195129182935, 0.3142492354,
+        0.1674974513, 0.3142492354, 0.1474974513, 0.3047974513] => "
+ 0.32 ┼╮            ╭─╮     ╭╮     ╭
  0.29 ┤╰╮    ╭─╮   ╭╯ │    ╭╯│     │
  0.26 ┤ │   ╭╯ ╰╮ ╭╯  ╰╮  ╭╯ ╰╮   ╭╯
  0.23 ┤ ╰╮ ╭╯   ╰╮│    ╰╮╭╯   ╰╮ ╭╯
  0.20 ┤  ╰╮│     ╰╯     ╰╯     │╭╯
- 0.16 ┤   ╰╯                   ╰╯
-         Plot with custom height & width."
-    );
+ 0.16 ┤   ╰╯                   ╰╯    ");
+ */
 
-    graph_eq!(test_twelve ? [0,0,0,0,1.5,0,0,-0.5,9,-3,0,0,1,2,1,0,0,0,0,
-				0,0,0,0,1.5,0,0,-0.5,8,-3,0,0,1,2,1,0,0,0,0,
-				0,0,0,0,1.5,0,0,-0.5,10,-3,0,0,1,2,1,0,0,0,0] ?
-                crate::Config::default().with_offset(10).with_height(10).with_caption("I'm a doctor, not an engineer.".to_string())
-    => "     10.00    ┤                                             ╭╮
-      8.70    ┤       ╭╮                                    ││
-      7.40    ┼       ││                 ╭╮                 ││
-      6.10    ┤       ││                 ││                 ││
-      4.80    ┤       ││                 ││                 ││
-      3.50    ┤       ││                 ││                 ││
-      2.20    ┤       ││   ╭╮            ││   ╭╮            ││   ╭╮
-      0.90    ┤   ╭╮  ││  ╭╯╰╮       ╭╮  ││  ╭╯╰╮       ╭╮  ││  ╭╯╰╮
-     -0.40    ┼───╯╰──╯│╭─╯  ╰───────╯╰──╯│╭─╯  ╰───────╯╰──╯│╭─╯  ╰───
-     -1.70    ┤        ││                 ││                 ││
-     -3.00    ┤        ╰╯                 ╰╯                 ╰╯
-                 I'm a doctor, not an engineer.");
+    graph_eq!(test_twelve ? arg.height=Some(11) ; [
+                0,0,0,0,1.5,0,0,(-0.5),9, (-3),0,0,1,2,1,0,0,0,0,
+				0,0,0,0,1.5,0,0,(-0.5),8, (-3),0,0,1,2,1,0,0,0,0,
+				0,0,0,0,1.5,0,0,(-0.5),10,(-3),0,0,1,2,1,0,0,0,0] => "
+ 10.0 ┤                                             ╭╮
+  8.7 ┤       ╭╮                                    ││
+  7.4 ┤       ││                 ╭╮                 ││
+  6.1 ┤       ││                 ││                 ││
+  4.8 ┤       ││                 ││                 ││
+  3.5 ┤       ││                 ││                 ││
+  2.2 ┤       ││   ╭╮            ││   ╭╮            ││   ╭╮
+  0.9 ┤   ╭╮  ││  ╭╯╰╮       ╭╮  ││  ╭╯╰╮       ╭╮  ││  ╭╯╰╮
+ -0.4 ┼───╯╰──╯│╭─╯  ╰───────╯╰──╯│╭─╯  ╰───────╯╰──╯│╭─╯  ╰───
+ -1.7 ┤        ││                 ││                 ││
+ -3.0 ┤        ╰╯                 ╰╯                 ╰╯         ");
 
-    graph_eq!(test_thirteen ? [-5,-2,-3,-4,0,-5,-6,-7,-8,0,-9,-3,-5,-2,-9,-3,-1]
-    => "  0.00 ┤   ╭╮   ╭╮
- -1.00 ┤   ││   ││     ╭
- -2.00 ┤╭╮ ││   ││  ╭╮ │
- -3.00 ┤│╰╮││   ││╭╮││╭╯
- -4.00 ┤│ ╰╯│   │││││││
- -5.00 ┼╯   ╰╮  │││╰╯││
- -6.00 ┤     ╰╮ │││  ││
- -7.00 ┤      ╰╮│││  ││
- -8.00 ┤       ╰╯││  ││
- -9.00 ┼         ╰╯  ╰╯ ");
+    graph_eq!(test_thirteen ? ; [
+        (-5),(-2),(-3),(-4),0,(-5),(-6),(-7),(-8),0,(-9),(-3),(-5),(-2),(-9),(-3),(-1)
+    ] => "
+  0.0 ┤   ╭╮   ╭╮
+ -1.0 ┤   ││   ││     ╭
+ -2.0 ┤╭╮ ││   ││  ╭╮ │
+ -3.0 ┤│╰╮││   ││╭╮││╭╯
+ -4.0 ┤│ ╰╯│   │││││││
+ -5.0 ┼╯   ╰╮  │││╰╯││
+ -6.0 ┤     ╰╮ │││  ││
+ -7.0 ┤      ╰╮│││  ││
+ -8.0 ┤       ╰╯││  ││
+ -9.0 ┤         ╰╯  ╰╯ ");
 
-    graph_eq!(test_fourteen ? [-0.000018527,-0.021,-0.00123,0.00000021312,
-    -0.0434321234,-0.032413241234,0.0000234234] ?
-        crate::Config::default().with_height(5).with_width(45)
-        => "  0.000 ┼─╮           ╭────────╮                    ╭
+     /*
+    graph_eq!(test_fourteen ? arg.height=Some(5) [
+        -0.000018527,-0.021,-0.00123,0.00000021312, -0.0434321234,-0.032413241234,0.0000234234
+    ] ?
+        crate::Config::default().with_height(5).with_width(45) => "
+  0.000 ┼─╮           ╭────────╮                    ╭
  -0.008 ┤ ╰──╮     ╭──╯        ╰─╮                ╭─╯
  -0.017 ┤    ╰─────╯             ╰╮             ╭─╯
  -0.025 ┤                         ╰─╮         ╭─╯
  -0.034 ┤                           ╰╮   ╭────╯
- -0.042 ┼                            ╰───╯           "
-    );
+ -0.042 ┼                            ╰───╯           ");
+ */
 
-    graph_eq!(test_fifteen ? [57.76,54.04,56.31,57.02,59.5,52.63,52.97,56.44,56.75,52.96,55.54,
-    55.09,58.22,56.85,60.61,59.62,59.73,59.93,56.3,54.69,55.32,54.03,50.98,50.48,54.55,47.49,
-    55.3,46.74,46,45.8,49.6,48.83,47.64,46.61,54.72,42.77,50.3,42.79,41.84,44.19,43.36,45.62,
-    45.09,44.95,50.36,47.21,47.77,52.04,47.46,44.19,47.22,45.55,40.65,39.64,37.26,40.71,42.15,
-    36.45,39.14,36.62]
-   => " 60.61 ┤             ╭╮ ╭╮
+    graph_eq!(test_fifteen ? arg.height=Some(25), arg.precision=Some(2) ; [
+        57.76,54.14,56.31,57.09,59.50,52.63,53.50,56.44,56.75,52.96,55.54,55.09,58.22,56.85,60.61,
+        59.62,59.73,60.15,56.30,54.69,55.32,54.03,50.98,50.48,54.55,47.49,55.30,46.74,46.00,45.80,
+        49.60,48.83,47.64,46.61,54.72,42.77,50.30,42.79,41.84,44.19,43.36,45.62,45.09,44.95,50.36,
+        47.21,47.77,52.04,47.46,44.19,47.22,45.55,40.65,39.64,37.26,40.71,42.15,36.45,39.14,36.62
+    ] => "
+ 60.61 ┤             ╭╮ ╭╮
  59.60 ┤   ╭╮        │╰─╯│
  58.60 ┤   ││      ╭╮│   │
  57.59 ┼╮ ╭╯│      │││   │
  56.58 ┤│╭╯ │ ╭─╮  │╰╯   ╰╮
  55.58 ┤││  │ │ │╭─╯      │╭╮    ╭╮
- 54.57 ┤╰╯  │ │ ││        ╰╯╰╮ ╭╮││      ╭╮
- 53.56 ┤    │╭╯ ╰╯           │ ││││      ││
- 52.56 ┤    ╰╯               │ ││││      ││           ╭╮
- 51.55 ┤                     ╰╮││││      ││           ││
- 50.54 ┤                      ╰╯│││      ││╭╮      ╭╮ ││
- 49.54 ┤                        │││  ╭─╮ ││││      ││ ││
- 48.53 ┤                        │││  │ │ ││││      ││ ││
+ 54.57 ┤╰╯  │ │ ││        ╰╯│  ╭╮││      ╭╮
+ 53.56 ┤    │╭╯ ││          ╰╮ ││││      ││
+ 52.56 ┤    ╰╯  ╰╯           │ ││││      ││
+ 51.55 ┤                     │ ││││      ││           ╭╮
+ 50.54 ┤                     ╰─╯│││      ││╭╮      ╭╮ ││
+ 49.54 ┤                        │││  ╭╮  ││││      ││ ││
+ 48.53 ┤                        │││  │╰╮ ││││      ││ ││
  47.52 ┤                        ╰╯│  │ ╰╮││││      │╰─╯╰╮╭╮
- 46.52 ┤                          ╰─╮│  ╰╯│││      │    │││
- 45.51 ┤                            ╰╯    │││   ╭──╯    ││╰╮
- 44.50 ┤                                  │││ ╭╮│       ╰╯ │
- 43.50 ┤                                  ││╰╮│╰╯          │
- 42.49 ┤                                  ╰╯ ╰╯            │   ╭╮
- 41.48 ┤                                                   │   ││
+ 46.52 ┤                          ╰╮ │  ╰╯│││      │    │││
+ 45.51 ┤                           ╰─╯    │││   ╭─╮│    ││╰╮
+ 44.50 ┤                                  │││ ╭╮│ ╰╯    ╰╯ │
+ 43.50 ┤                                  │││ │╰╯          │
+ 42.49 ┤                                  ╰╯╰╮│            │   ╭╮
+ 41.48 ┤                                     ╰╯            │   ││
  40.48 ┤                                                   ╰╮ ╭╯│
  39.47 ┤                                                    ╰╮│ │╭╮
  38.46 ┤                                                     ││ │││
  37.46 ┤                                                     ╰╯ │││
- 36.45 ┤                                                        ╰╯╰"
-    );
+ 36.45 ┤                                                        ╰╯╰ ");
 
+
+    /*
     #[test]
     fn test_min_max() {
         assert_eq!(
@@ -512,7 +541,6 @@ mod tests {
             ])
         );
     }
-
+*/
 }
 
-*/
