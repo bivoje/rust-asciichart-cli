@@ -19,6 +19,7 @@ pub struct Config {
 }
 
 pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
+    println!("{:?}", cfg);
     // TODO check if v_step is positive
 
     let label_margin = {
@@ -54,7 +55,9 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
 
     // FIXME what about single row?? what about inf values?
     //let clamp = |v| v.max(v_max + 1.).min(v_min - 1.)
-    let scaled = |v :f64| (!v.is_nan()).then_some(((v-cfg.v_bot)/cfg.v_step).round() as usize);
+    let scaled = |v :f64| (!v.is_nan()).then_some(
+        if cfg.v_step == 0. {0} else { ((v-cfg.v_bot)/cfg.v_step).round() as usize }
+    );
     // what about INF?
 
     // margin + axis char 1
@@ -347,6 +350,11 @@ mod tests {
     graph_eq!(test_ones_ ? arg.height=Some(3) ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
     graph_eq!(test_zeros ? ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
     graph_eq!(test_zeros_? arg.height=Some(3) ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
+
+    graph_eq!(test_ones_jitter ? arg.height=Some(1) ;
+          [0.9999999, 1.000001, 0.9999998, 1.0000012, 0] => " 0.0 ┼────");
+    graph_eq!(test_onenans_jitter ? arg.height=Some(1) ;
+          [0.9999999, 1.000001, _,         1.0000012, 0] => " 0.0 ┼─╴╶─");
 
     graph_eq!(test_three ? arg.height=None ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
  11.0 ┤      ╭╮
