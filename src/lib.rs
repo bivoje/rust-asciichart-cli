@@ -8,10 +8,10 @@ pub const DEFAULT_SYMBOLS: [char; 10] = ['┼', '┤', '╶', '╴', '─', '╰
 pub struct Config {
     pub symbols: [char; 10], // defaults to DEFAULT_SYMBOLS
     pub width: usize, // None for variate
-    pub height: usize, // None for integer scheme; default = 5
     // what if w=0 or h=0?
 
-    pub v_bot: f64,
+    pub label_bot: f64,
+    pub label_top: f64,
     pub v_step: f64,
 
     pub label_bodywidth: usize,
@@ -20,7 +20,16 @@ pub struct Config {
 
 pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
     println!("{:?}", cfg);
-    // TODO check if v_step is positive
+    assert!(cfg.width > 1); // TODO should be?
+    assert!(cfg.label_bot <= cfg.label_top);
+    assert!(cfg.v_step >= 0.); // TODO v_step < 0 && label_bot > label_top for inverted??
+    let v_step = if cfg.v_step == 0. {f64::MIN_POSITIVE} else {cfg.v_step};
+    // keep the value positive
+
+    let height = {
+        let intv = cfg.label_top - cfg.label_bot;
+        if intv == 0. {1} else {1 + (intv/v_step) as usize}
+    };
 
     let label_margin = {
         let abs_width = cfg.label_bodywidth + // add 1 for midpoint if precision is not 0
@@ -29,72 +38,75 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
         1 + abs_width + 1
     };
 
-    let mut buffer = vec![vec![(' ', 9); label_margin + cfg.width]; cfg.height];
+    // note that each row had length `label_margin + cfg.width`, omitting 1 for mid-axis character.
+    // this is because, the axis point is used to represent first data point.
+    let mut buffer = vec![vec![(' ', 9); label_margin + cfg.width]; height];
     println!("width:{} lm:{}", cfg.width, label_margin);
 
-    for y in 0..cfg.height { // never executed when height == 1, in which case min==max
-        // String uses Vec[u8] in specified (default UTF-8) encoding internally,
-        // while hiding the internals to outer codes.
-        // write_* functions produces u8 stream,
-        // which then can be written to String's internal buffer.
-        // but Vec<char> does not supported (no write_fmt implementation..)
-        // format! creates temporary String,
-        // this is wasteful yet I couldn't find way to get char stream from format!.
-        // https://stackoverflow.com/a/24542502
+    for y in 0..height {
         let label = format!(
             "{number:LW$.PREC$} ",
-            LW = label_margin - 1, // subtract trailing space 1
+            LW = label_margin - 1, // subtract 1 for the trailing space
             PREC = cfg.label_precision,
-            number = cfg.v_bot + (y as f64) * cfg.v_step,
+            number = if y == height-1 {
+                cfg.label_top // to avoid top label being like 1.9999999 for float error
+            } else {
+                cfg.label_bot + (y as f64) * v_step
+            },
         );
-        for (i,c) in label.chars().enumerate() {
-            buffer[y][i] = (c, 9);
-        }
-        buffer[y][label_margin] = (cfg.symbols[1], 9); // axis char
+        for (i,c) in label.chars().enumerate() { buffer[y][i] = (c, 9); }
+        buffer[y][label_margin] = (cfg.symbols[1], 9); // '┤' axis char
     }
 
-    // FIXME what about single row?? what about inf values?
-    //let clamp = |v| v.max(v_max + 1.).min(v_min - 1.)
+    // scale the value into row index. `-1` if too low, `height` if too high, `None` if NaN
     let scaled = |v :f64| (!v.is_nan()).then_some(
-        if cfg.v_step == 0. {0} else { ((v-cfg.v_bot)/cfg.v_step).round() as usize }
+        if v < cfg.label_bot - v_step/2. { -1i32 }
+        else if cfg.label_top + v_step/2. < v { height as i32 }
+        else if v_step != 0. { ((v-cfg.label_bot)/v_step).round() as i32 }
+        else {0}
     );
-    // what about INF?
 
     // margin + axis char 1
     let offset = label_margin + 1;
 
     for (vs,color) in vss {
-        let color = *color;
-
-        if let Some(&v) = vs.get(0) {
-            if let Some(y) = scaled(v) { // what if INF or NAN?
-                buffer[y][offset-1] = (cfg.symbols[0], color);
-                // continued axis char
-            }
-        }
 
         // FIXME use .take(n)
         let vvs = vs[..cfg.width.min(vs.len())].into_iter().cloned().tuple_windows();
-        for (x,(v0,v1)) in vvs.enumerate() {
+        for (x,(v0,v1)) in vvs.enumerate() { // runs at most width-1 times
+
+            let mut put = |y, x, chr| if let Ok(y) = usize::try_from(y) {
+                if y < height {
+                    buffer[y as usize][x+offset] = (chr, *color);
+                }
+            };
 
             match (scaled(v0), scaled(v1)) {
                 (None, None) => continue,
                 (None, Some(y)) =>
-                    buffer[y][x+offset] = (cfg.symbols[2], color),
+                    put(y, x, cfg.symbols[2]), // '╶'
                 (Some(y), None) =>
-                    buffer[y][x+offset] = (cfg.symbols[3], color),
+                    put(y, x, cfg.symbols[3]), // '╴'
                 (Some(y0), Some(y1)) if y0 == y1 =>
-                    buffer[y0][x+offset] = (cfg.symbols[4], color),
+                    put(y0, x, cfg.symbols[4]), // '─'
                 (Some(y0), Some(y1)) => {
-                    buffer[y1][x+offset] = (if y0 > y1 {cfg.symbols[5]} else {cfg.symbols[6]}, color);
-                    buffer[y0][x+offset] = (if y0 > y1 {cfg.symbols[7]} else {cfg.symbols[8]}, color);
+                    put(y1, x, if y0 > y1 {cfg.symbols[5]} else {cfg.symbols[6]}); // '╰', '╭'
+                    put(y0, x, if y0 > y1 {cfg.symbols[7]} else {cfg.symbols[8]}); // '╮', '╯'
 
-                    for y in y0.min(y1)+1 ..= y0.max(y1)-1 { // FIXME what if single row?
-                        buffer[y][x+offset] = (cfg.symbols[9], color)
+                    for y in y0.min(y1)+1 ..= y0.max(y1)-1 {
+                        put(y, x, cfg.symbols[9]); // '│'
                     }
                 },
             }
         }
+
+        // for first valut, mark it on the vertical axis (continued axis)
+        if let Some(&v) = vs.get(0) { if let Some(y) = scaled(v) {
+            if 0 <= y && y < height as i32 {
+                buffer[y as usize][offset-1] = (cfg.symbols[0], *color); // '┼' continued axis char
+            }
+        }}
+
     }
 
     let mut ret = String::new();
@@ -169,7 +181,7 @@ impl Args {
     pub fn gen_config(&self, vss: &Vec<(Vec<f64>,u32)>) -> Option<Config> {
 
         let (v_bot, v_top) = {
-            let nan = std::f64::NAN;
+            let nan = f64::NAN;
             let min = min_f64(vss.iter().map(|(vs,_)| min_f64(vs.iter().cloned()).unwrap_or(nan)));
             let max = max_f64(vss.iter().map(|(vs,_)| max_f64(vs.iter().cloned()).unwrap_or(nan)));
 
@@ -179,27 +191,37 @@ impl Args {
                 return None;
             }
         };
+
         println!("min:{} max:{}", v_bot, v_top);
 
         let width = self.width.unwrap_or(vss.iter().map(|vs| vs.0.len()).min().unwrap_or(0));
 
         let v_interval = v_top - v_bot; // >= 0
         let height = if v_interval == 0. {1} else { // force height to 1 if single-valued
+            // use integer mode when height is not specified
             self.height.unwrap_or(1 + v_interval.floor() as usize)
         }; // >= 1
         println!("width:{} height:{}", width, height);
 
-        // use integer mode when height is not specified
-        let v_step = if height == 1 {0.} else { v_interval / (height-1) as f64 };
+        let (label_bot, label_top, v_step) = if height == 1 {
+            // if user forced height=1, we need to make label_bot/top accordingly
+            let mid = (v_bot + v_top) / 2.;
+            // to indicate the range of values coverd in the plot
+            let v_step = v_interval * 1.5; // *1.5 for generouse error range
+            (mid, mid, v_step)
+        } else {
+            (v_bot, v_top, v_interval / (height-1) as f64)
+        };
+
         println!("intv:{} step:{}", v_interval, v_step);
 
         let label_bodywidth = {
-            let bot_width = 1 + if v_bot < 0. {1} else {0} + v_bot.abs().log10().floor() as usize;
-            let top_width = 1 + if v_top < 0. {1} else {0} + v_top.abs().log10().floor() as usize;
+            let bot_width = 1 + if label_bot < 0. {1} else {0} + label_bot.abs().log10().floor() as usize;
+            let top_width = 1 + if label_top < 0. {1} else {0} + label_top.abs().log10().floor() as usize;
             bot_width.max(top_width)
         };
         let label_precision = self.precision.unwrap_or({
-            let signum = if v_step != 0. {v_step} else if v_bot != 0. {v_bot} else {1.};
+            let signum = if v_step != 0. {v_step} else if label_bot != 0. {label_bot} else {1.};
             let prec = 1 - signum.log10().floor() as i32;
             (if self.height.is_none() {0} else {1}).max(prec) as usize
             // force prec >= 1 unless height=None (integer mode)
@@ -207,8 +229,8 @@ impl Args {
         println!("<{}>.<{}>", label_bodywidth, label_precision);
 
         let mut cfg = Config {
-            symbols: DEFAULT_SYMBOLS,
-            v_bot: v_bot, v_step: v_step, width: width, height: height,
+            symbols: DEFAULT_SYMBOLS, width: width,
+            label_bot: label_bot, label_top: label_top, v_step: v_step,
             label_bodywidth: label_bodywidth, label_precision: label_precision,
         };
 
@@ -227,9 +249,9 @@ mod tests {
     use std::panic::panic_any;
 
     macro_rules! toF64 {
-      (_) => { std::f64::NAN };
-      (^) => { std::f64::INF };
-      (v) => { std::f64::NINF };
+      (_) => { f64::NAN };
+      (^) => { f64::INFINITY };
+      (v) => { f64::NEG_INFINITY };
       ($num:expr) => { f64::from($num) };
     }
 
@@ -243,13 +265,13 @@ mod tests {
         (cfg, $arg:ident, $key:ident, $val:expr) => {
         };
         (arg, $arg:ident, $key:ident, $val:expr) => {
-            $arg.$key = $val;
+            $arg.$key = Some($val);
         };
     }
 
     macro_rules! set_cfg {
         (cfg, $cfg:ident, $key:ident, $val:expr) => {
-            $cfg.$key = $val;
+            $cfg.$key = Some($val);
         };
         (arg, $cfg:ident, $key:ident, $val:expr) => {
         };
@@ -292,14 +314,14 @@ mod tests {
 
 
     // Missing data values in the series can be specified as a NaN.
-    graph_eq!(nan_at_top ? arg.height=Some(4) ; [1,2,3,4,_,4,3,2,1] => "
+    graph_eq!(nan_at_top ? arg.height=4 ; [1,2,3,4,_,4,3,2,1] => "
  4.0 ┤  ╭╴╶╮
  3.0 ┤ ╭╯  ╰╮
  2.0 ┤╭╯    ╰╮
  1.0 ┼╯      ╰ ");
 
     // `series` can also be a list of lists to support multiple data series.
-    graph_eq!(mountain_valley ? arg.height=Some(4) ;
+    graph_eq!(mountain_valley ? arg.height=4 ;
               [10,20,30,40,30,20,10], [40,30,20,10,20,30,40] => "
  40.0 ┼╮ ╭╮ ╭
  30.0 ┤╰╮╯╰╭╯
@@ -328,7 +350,7 @@ mod tests {
 
     // `height` specifies the number of rows the graph should occupy. It can be
     // used to scale down a graph with large data values:
-    graph_eq!(mountain ? arg.height=Some(5) ; [10,20,30,40,50,40,30,20,10] => "
+    graph_eq!(mountain ? arg.height=5 ; [10,20,30,40,50,40,30,20,10] => "
  50.0 ┤   ╭╮
  40.0 ┤  ╭╯╰╮
  30.0 ┤ ╭╯  ╰╮
@@ -338,7 +360,7 @@ mod tests {
     // `format` specifies a Python format string used to format the labels on the
     // y-axis. The default value is "{:8.2f} ". This can be used to remove the
     // decimal point:
-    graph_eq!(precision ? arg.precision=Some(0), arg.height=Some(5) ;
+    graph_eq!(precision ? arg.precision=0, arg.height=5 ;
         [10,20,30,40,50,40,30,20,10] => "
  50 ┤   ╭╮
  40 ┤  ╭╯╰╮
@@ -347,16 +369,28 @@ mod tests {
  10 ┼╯      ╰ ");
 
     graph_eq!(test_ones  ? ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
-    graph_eq!(test_ones_ ? arg.height=Some(3) ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
+    graph_eq!(test_ones_ ? arg.height=3 ; [1, 1, 1, 1, 1] => " 1.0 ┼────");
     graph_eq!(test_zeros ? ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
-    graph_eq!(test_zeros_? arg.height=Some(3) ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
+    graph_eq!(test_zeros_? arg.height=3 ; [0, 0, 0, 0, 0] => " 0.0 ┼────");
 
-    graph_eq!(test_ones_jitter ? arg.height=Some(1) ;
-          [0.9999999, 1.000001, 0.9999998, 1.0000012, 0] => " 0.0 ┼────");
-    graph_eq!(test_onenans_jitter ? arg.height=Some(1) ;
-          [0.9999999, 1.000001, _,         1.0000012, 0] => " 0.0 ┼─╴╶─");
+    graph_eq!(test_ones_jitter ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, 0.9999998, 1.0000012, 1] => " 1.0 ┼────");
+    graph_eq!(test_onenans_jitter ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, _,         1.0000012, 1] => " 1.0 ┼─╴╶─");
+    graph_eq!(test_oneinfs_jitter ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, ^,         1.0000012, 1] => " 1.0 ┼─╯╰─");
+    graph_eq!(test_oneninfs_jitter ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, v,         1.0000012, 1] => " 1.0 ┼─╮╭─");
+    graph_eq!(test_oneinfs_jittera ? arg.height=1, arg.precision=1 ;
+          [^,         1.000001, _,         1.0000012, 1] => " 1.0 ┤╰╴╶─");
+    graph_eq!(test_oneninfs_jittera ? arg.height=1, arg.precision=1 ;
+          [v,         1.000001, _,         1.0000012, 1] => " 1.0 ┤╭╴╶─");
+    graph_eq!(test_oneinfs_jitterb ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, _,         1.0000012, ^] => " 1.0 ┼─╴╶╯");
+    graph_eq!(test_oneninfs_jitterb ? arg.height=1, arg.precision=1 ;
+          [0.9999999, 1.000001, _,         1.0000012, v] => " 1.0 ┼─╴╶╮");
 
-    graph_eq!(test_three ? arg.height=None ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
+    graph_eq!(test_three ? ; [2,1,1,2,(-2),5,7,11,3,7,1] => "
  11.0 ┤      ╭╮
  10.0 ┤      ││
   9.0 ┤      ││
@@ -372,7 +406,7 @@ mod tests {
  -1.0 ┤   ││
  -2.0 ┤   ╰╯     ");
 
-    graph_eq!(test_four ? arg.height=None ; [2,1,1,2,(-2),5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] => "
+    graph_eq!(test_four ? ; [2,1,1,2,(-2),5,7,11,3,7,4,5,6,9,4,0,6,1,5,3,6,2] => "
  11.0 ┤      ╭╮
  10.0 ┤      ││
   9.0 ┤      ││    ╭╮
@@ -404,19 +438,19 @@ mod tests {
  -1.0 ┤   ││
  -2.0 ┤   ╰╯                 ");
 
-    graph_eq!(test_six ? arg.precision = Some(2) ; [0.2,0.1,0.2,2,(-0.9),0.7,1.28,0.3,0.7,0.4,0.5] => "
+    graph_eq!(test_six ? arg.precision = 2 ; [0.2,0.1,0.2,2,(-0.9),0.7,1.28,0.3,0.7,0.4,0.5] => "
   2.00 ┤  ╭╮ ╭╮
   0.55 ┼──╯│╭╯╰───
  -0.90 ┤   ╰╯      ");
 
-    graph_eq!(test_seven ? arg.height=Some(5), arg.precision=Some(2); [3,1,1,3,(-2),5,7,11,3,7,1] => "
+    graph_eq!(test_seven ? arg.height=5, arg.precision=2; [3,1,1,3,(-2),5,7,11,3,7,1] => "
  11.00 ┤      ╭╮
   7.75 ┤     ╭╯│╭╮
   4.50 ┼╮ ╭╮╭╯ ╰╯│
   1.25 ┤╰─╯││    ╰
  -2.00 ┤   ╰╯     ");
 
-    graph_eq!(test_eight ? arg.height=Some(9) ; [0.453,0.141,0.951,0.251,0.223,0.581,0.771,0.191,0.393,0.617,0.478] => "
+    graph_eq!(test_eight ? arg.height=9 ; [0.453,0.141,0.951,0.251,0.223,0.581,0.771,0.191,0.393,0.617,0.478] => "
  0.95 ┤ ╭╮
  0.85 ┤ ││
  0.75 ┤ ││  ╭╮
@@ -427,32 +461,33 @@ mod tests {
  0.24 ┤││╰─╯ ││
  0.14 ┤╰╯    ╰╯   ");
 
-    /*
-    graph_eq!(test_nine ? [0.01, 0.004, 0.003, 0.0042, 0.0083, 0.0033, 0.0079]
-    => " 0.010 ┼╮
+    graph_eq!(test_nine ? arg.height=8, arg.precision=3;
+        [0.01, 0.004, 0.003, 0.0042, 0.0083, 0.0033, 0.0079] => "
+ 0.010 ┼╮
  0.009 ┤│
  0.008 ┤│  ╭╮╭
  0.007 ┤│  │││
  0.006 ┤│  │││
  0.005 ┤│  │││
  0.004 ┤╰╮╭╯││
- 0.003 ┤ ╰╯ ╰╯"
-    );
+ 0.003 ┤ ╰╯ ╰╯ ");
 
-    graph_eq!(test_ten ? [192,431,112,449,-122,375,782,123,911,1711,172] ? crate::Config::default().with_height(10)
-    => " 1711 ┤        ╭╮
- 1528 ┼        ││
+    graph_eq!(test_ten ? arg.height=11, arg.precision=0;
+        [192,431,112,449,(-122),375,782,123,911,1711,172] => "
+ 1711 ┤        ╭╮
+ 1528 ┤        ││
  1344 ┤        ││
  1161 ┤        ││
   978 ┤       ╭╯│
   794 ┤     ╭╮│ │
   611 ┤     │││ │
   428 ┤╭╮╭╮╭╯││ │
-  245 ┼╯╰╯││ ╰╯ ╰
-   61 ┤   ││
+  245 ┼╯││││ ││ ╰
+   61 ┤ ╰╯││ ╰╯
  -122 ┤   ╰╯     ");
 
-    graph_eq!(test_eleven ? height = Some(5) ; [
+    /*
+    graph_eq!(test_eleven ? height = 5 ; [
         0.3189989805, 0.149949026, 0.30142492354, 0.195129182935, 0.3142492354,
         0.1674974513, 0.3142492354, 0.1474974513, 0.3047974513] => "
  0.32 ┼╮            ╭─╮     ╭╮     ╭
@@ -463,7 +498,7 @@ mod tests {
  0.16 ┤   ╰╯                   ╰╯    ");
  */
 
-    graph_eq!(test_twelve ? arg.height=Some(11) ; [
+    graph_eq!(test_twelve ? arg.height=11 ; [
                 0,0,0,0,1.5,0,0,(-0.5),9, (-3),0,0,1,2,1,0,0,0,0,
 				0,0,0,0,1.5,0,0,(-0.5),8, (-3),0,0,1,2,1,0,0,0,0,
 				0,0,0,0,1.5,0,0,(-0.5),10,(-3),0,0,1,2,1,0,0,0,0] => "
@@ -494,7 +529,7 @@ mod tests {
  -9.0 ┤         ╰╯  ╰╯ ");
 
      /*
-    graph_eq!(test_fourteen ? arg.height=Some(5) [
+    graph_eq!(test_fourteen ? arg.height=5 [
         -0.000018527,-0.021,-0.00123,0.00000021312, -0.0434321234,-0.032413241234,0.0000234234
     ] ?
         crate::Config::default().with_height(5).with_width(45) => "
@@ -506,7 +541,7 @@ mod tests {
  -0.042 ┼                            ╰───╯           ");
  */
 
-    graph_eq!(test_fifteen ? arg.height=Some(25), arg.precision=Some(2) ; [
+    graph_eq!(test_fifteen ? arg.height=25, arg.precision=2 ; [
         57.76,54.14,56.31,57.09,59.50,52.63,53.50,56.44,56.75,52.96,55.54,55.09,58.22,56.85,60.61,
         59.62,59.73,60.15,56.30,54.69,55.32,54.03,50.98,50.48,54.55,47.49,55.30,46.74,46.00,45.80,
         49.60,48.83,47.64,46.61,54.72,42.77,50.30,42.79,41.84,44.19,43.36,45.62,45.09,44.95,50.36,
@@ -538,17 +573,5 @@ mod tests {
  37.46 ┤                                                     ╰╯ │││
  36.45 ┤                                                        ╰╯╰ ");
 
-
-    /*
-    #[test]
-    fn test_min_max() {
-        assert_eq!(
-            (-2f64, 11f64),
-            crate::min_max(&vec![
-                2f64, 1f64, 1f64, 2f64, -2f64, 5f64, 7f64, 11f64, 3f64, 7f64, 1f64
-            ])
-        );
-    }
-*/
 }
 
