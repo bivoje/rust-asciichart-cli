@@ -5,6 +5,12 @@ use asciichart_cli::{plot, Args, Parser};
 fn main() {
     let args = Args::parse();
 
+    if let Some(ref demos) = args.demo {
+        let vss = demo_data(demos);
+        print!("{}", plot(&vss, args.gen_config(&vss).unwrap()));
+        return;
+    }
+
     let mut vss = vec![];
     let mut datacnt = 0;
 
@@ -44,8 +50,18 @@ fn main() {
     }
 }
 
-fn demo() {
+fn demo_data(demo :&str) -> Vec<(Vec<f64>,u32)> {
+    match demo {
+        "sincos" => demo_sincos(),
+        "rand"   => demo_rand(),
+        "rand4"  => demo_rand4(),
+        _        => vec![],
+    }
+}
+
+fn demo_sincos() -> Vec<(Vec<f64>,u32)> {
     let width = 80;
+
     let mut v1 = vec![0f64; width];
     for i in 0 .. width {
         let pi = std::f64::consts::PI;
@@ -58,10 +74,32 @@ fn demo() {
         v2[i] = 7. * (i as f64 * pi * 4.0 / width as f64).cos();
     }
 
-    let vss = vec![(v1,1), (v2,2)];
+    vec![(v1,1), (v2,2)]
+}
 
-    let args = Args::default();
-    let cfg = args.gen_config(&vss).unwrap();
-    let ret = plot(&vss, cfg);
-    print!("{}", ret);
+fn demo_rand() -> Vec<(Vec<f64>,u32)> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let width = 120;
+    let mut v = vec![0f64; width];
+    for i in 1 .. width {
+        v[i] = v[i - 1] + (4.*rng.gen::<f64>()-2.).round();
+    }
+
+    vec![(v,9)]
+}
+
+fn demo_rand4() -> Vec<(Vec<f64>,u32)> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let width = 120;
+
+    (0..4).map(|i| {
+        let mut v = vec![0f64; width];
+        v[0] = (10.*rng.gen::<f64>()-5.).round();
+        for i in 1 .. width {
+            v[i] = v[i - 1] + (4.*rng.gen::<f64>()-2.).round();
+        }
+        (v, i+1)
+    }).collect::<Vec<_>>()
 }

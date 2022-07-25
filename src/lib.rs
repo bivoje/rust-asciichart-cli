@@ -2,12 +2,13 @@
 use itertools::Itertools;
 use std::fmt::Write;
 
-pub const DEFAULT_SYMBOLS: [char; 10] = ['┼', '┤', '╶', '╴', '─', '╰', '╭', '╮', '╯', '│'];
+pub const UNICODE_SYMBOLS: [char; 10] = ['┼', '┤', '╶', '╴', '─', '╰', '╭', '╮', '╯', '│'];
+pub const   ASCII_SYMBOLS: [char; 10] = ['L', 'I', '<', '>', '_', '\\', '.', '.', '/', '|'];
 
 #[derive(Debug)]
 pub struct Config {
-    pub symbols: [char; 10], // defaults to DEFAULT_SYMBOLS
-    pub width: usize, // None for variate
+    pub symbols: [char; 10],
+    pub width: usize, // TODO TEST None for variate
     // what if w=0 or h=0?
 
     pub label_bot: f64,
@@ -19,7 +20,6 @@ pub struct Config {
 }
 
 pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
-    assert!(cfg.width > 0); // TODO should be?
     assert!(cfg.label_bot <= cfg.label_top);
     assert!(cfg.v_step >= 0.); // TODO v_step < 0 && label_bot > label_top for inverted??
     let v_step = if cfg.v_step == 0. {f64::MIN_POSITIVE} else {cfg.v_step};
@@ -214,13 +214,15 @@ impl Args {
         });
 
         let mut cfg = Config {
-            symbols: DEFAULT_SYMBOLS, width: width,
+            symbols: if self.ascii {ASCII_SYMBOLS} else {UNICODE_SYMBOLS}, width: width,
             label_bot: label_bot, label_top: label_top, v_step: v_step,
             label_bodywidth: label_bodywidth, label_precision: label_precision,
         };
 
-        if let Some(tileset) = &self.tileset {
-            for (i,c) in tileset.chars().enumerate() { cfg.symbols[i] = c; }
+        if ! self.ascii {
+            if let Some(tileset) = &self.tileset {
+                for (i,c) in tileset.chars().enumerate() { cfg.symbols[i] = c; }
+            }
         }
 
         Some(cfg)
