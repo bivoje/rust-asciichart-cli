@@ -4,6 +4,7 @@ name = "asciichart-cli"
 version = "0.1.0"
 edition = "2021"
 description = "provides CUI interface for asciichart library"
+licese = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -125,31 +125,56 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
 
 pub use clap::Parser;
 
+// TODO color as options?
+// TODO label on righthand?
+// TODO multiple labels?? <- multiple min-max?
+// TODO multiple plots?
 #[derive(Parser, Debug, Default)]
 #[clap(name = "asciichart-cui")]
 #[clap(author, version, about, long_about = None)] // read from Cargo.toml
 pub struct Args {
-
+    /// Maximum value of the vertical label.
     #[clap(long, value_parser)]
     pub ymax: Option<f64>,
 
+    /// Minimum value of the vertical label.
     #[clap(long, value_parser)]
     pub ymin: Option<f64>,
 
+    /// # of datapoints to plot, trailing data will be ignored.
     #[clap(short, long, value_parser)]
     pub width: Option<usize>,
+    // TODO used as an argument to interpolate feature in the future
 
+    /// # of rows in the plot. if not specified, height will be adjusted for integer-ranged labels.
     #[clap(short, long, value_parser)]
     pub height: Option<usize>,
 
+    /// Characters to be used for plot. Must be a string of width 10,
+    /// where each characters are used for
+    /// 0: vertical axis continued, 1: vertical axis
+    /// 2: horizontal left half, 3: horizontal right half, 4: horizontal whole,
+    /// 5: L shape corner, 6: r shape corner, 7: flipped r shape corner, 8: j shape corner
+    /// 9: vertical line.
     #[clap(long, value_parser, validator=validate_tileset, arg_enum)]
     pub tileset: Option<String>,
 
+    /// # of digits after floating point for each label.
     #[clap(short, long, value_parser)]
     pub precision: Option<usize>,
 
+    /// Repeat drawing the plot for each datarow.
     #[clap(long, value_parser, default_value_t=false)]
     pub scan: bool,
+
+    /// Overwrite <TILESET> with ascii characters "LI<>_\\../|".
+    #[clap(long, value_parser, default_value_t=false)]
+    pub ascii: bool,
+
+    /// Use specified demo data instead of reading from stdin.
+    /// Possible values are "sincos", "rand" and "rand4".
+    #[clap(long, value_parser)]
+    pub demo: Option<String>,
 }
 
 fn validate_tileset(s :&str) -> Result<(), &'static str> {
