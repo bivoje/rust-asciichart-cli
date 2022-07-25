@@ -12,3 +12,8 @@ licese = "MIT"
 clap = { version = "3.2.14", features = ["derive"] }
 itertools = "0.10.3"
 rand = "0.8.5"
+
+# https://stackoverflow.com/a/31778003
+# use following commands to get statically linked executable
+# rustup target add x86_64-unknown-linux-musl
+# cargo build --target=x86_64-unknown-linux-musl --release

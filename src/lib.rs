@@ -1,6 +1,7 @@
 
 use itertools::Itertools;
 use std::fmt::Write;
+use std::collections::VecDeque;
 
 pub const UNICODE_SYMBOLS: [char; 10] = ['┼', '┤', '╶', '╴', '─', '╰', '╭', '╮', '╯', '│'];
 pub const   ASCII_SYMBOLS: [char; 10] = ['L', 'I', '<', '>', '_', '\\', '.', '.', '/', '|'];
@@ -19,7 +20,7 @@ pub struct Config {
     pub label_precision: usize,
 }
 
-pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
+pub fn plot(vss: &Vec<(VecDeque<f64>,u32)>, cfg: Config) -> (String, usize) {
     assert!(cfg.label_bot <= cfg.label_top);
     assert!(cfg.v_step >= 0.); // TODO v_step < 0 && label_bot > label_top for inverted??
     let v_step = if cfg.v_step == 0. {f64::MIN_POSITIVE} else {cfg.v_step};
@@ -70,7 +71,7 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
     for (vs,color) in vss {
 
         // FIXME use .take(n)
-        let vvs = vs[..cfg.width.min(vs.len())].into_iter().cloned().tuple_windows();
+        let vvs = vs.iter().cloned().tuple_windows();
         for (x,(v0,v1)) in vvs.enumerate() { // runs at most width-1 times
 
             let mut put = |y, x, chr| if let Ok(y) = usize::try_from(y) {
@@ -119,7 +120,7 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
         write!(ret, "\n").unwrap();
     }
 
-    ret
+    (ret, height)
 }
 
 
@@ -165,7 +166,7 @@ pub struct Args {
 
     /// Repeat drawing the plot for each datarow.
     #[clap(long, value_parser, default_value_t=false)]
-    pub scan: bool,
+    pub monitor: bool,
 
     /// Overwrite <TILESET> with ascii characters "LI<>_\\../|".
     #[clap(long, value_parser, default_value_t=false)]
@@ -191,7 +192,7 @@ fn max_f64<T> (iter: T) -> Option<f64> where T: Iterator<Item=f64> {
 
 impl Args {
     // handles generates configs, calculates defaults that are data-related
-    pub fn gen_config(&self, vss: &Vec<(Vec<f64>,u32)>) -> Option<Config> {
+    pub fn gen_config(&self, vss: &Vec<(VecDeque<f64>,u32)>) -> Option<Config> {
       // FIXME is optional needed?
 
         let (v_bot, v_top) = {
