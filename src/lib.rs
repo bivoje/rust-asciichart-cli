@@ -19,8 +19,7 @@ pub struct Config {
 }
 
 pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
-    println!("{:?}", cfg);
-    assert!(cfg.width > 1); // TODO should be?
+    assert!(cfg.width > 0); // TODO should be?
     assert!(cfg.label_bot <= cfg.label_top);
     assert!(cfg.v_step >= 0.); // TODO v_step < 0 && label_bot > label_top for inverted??
     let v_step = if cfg.v_step == 0. {f64::MIN_POSITIVE} else {cfg.v_step};
@@ -28,7 +27,7 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
 
     let height = {
         let intv = cfg.label_top - cfg.label_bot;
-        if intv == 0. {1} else {1 + (intv/v_step) as usize}
+        if intv == 0. {1} else {1 + (intv/v_step).round() as usize}
     };
 
     let label_margin = {
@@ -41,7 +40,6 @@ pub fn plot(vss: &Vec<(Vec<f64>,u32)>, cfg: Config) -> String {
     // note that each row had length `label_margin + cfg.width`, omitting 1 for mid-axis character.
     // this is because, the axis point is used to represent first data point.
     let mut buffer = vec![vec![(' ', 9); label_margin + cfg.width]; height];
-    println!("width:{} lm:{}", cfg.width, label_margin);
 
     for y in 0..height {
         let label = format!(
@@ -133,35 +131,25 @@ pub use clap::Parser;
 pub struct Args {
 
     #[clap(long, value_parser)]
-    ymax: Option<f64>,
+    pub ymax: Option<f64>,
 
     #[clap(long, value_parser)]
-    ymin: Option<f64>,
+    pub ymin: Option<f64>,
 
     #[clap(short, long, value_parser)]
-    width: Option<usize>,
+    pub width: Option<usize>,
 
     #[clap(short, long, value_parser)]
-    height: Option<usize>,
+    pub height: Option<usize>,
 
     #[clap(long, value_parser, validator=validate_tileset, arg_enum)]
-    tileset: Option<String>,
+    pub tileset: Option<String>,
 
     #[clap(short, long, value_parser)]
-    precision: Option<usize>,
+    pub precision: Option<usize>,
 
-    #[clap(short, long, value_parser, arg_enum, default_value_t=Mode::Fast)]
-    // FIXME arg_enum attribute makes clap don't require Display implementation on Mode
-    // But there's not documentation for that... :/
-    // https://github.com/clap-rs/clap/issues/3185
-    // https://github.com/clap-rs/clap/pull/3188
-    mode: Mode,
-}
-
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
-pub enum Mode {
-    #[default] // FIXME
-    Fast, Slow
+    #[clap(long, value_parser, default_value_t=false)]
+    pub scan: bool,
 }
 
 fn validate_tileset(s :&str) -> Result<(), &'static str> {
@@ -177,8 +165,9 @@ fn max_f64<T> (iter: T) -> Option<f64> where T: Iterator<Item=f64> {
 }
 
 impl Args {
-  // handles generates configs, calculates defaults that are data-related
+    // handles generates configs, calculates defaults that are data-related
     pub fn gen_config(&self, vss: &Vec<(Vec<f64>,u32)>) -> Option<Config> {
+      // FIXME is optional needed?
 
         let (v_bot, v_top) = {
             let nan = f64::NAN;
@@ -192,16 +181,12 @@ impl Args {
             }
         };
 
-        println!("min:{} max:{}", v_bot, v_top);
-
         let width = self.width.unwrap_or(vss.iter().map(|vs| vs.0.len()).min().unwrap_or(0));
 
         let v_interval = v_top - v_bot; // >= 0
         let height = if v_interval == 0. {1} else { // force height to 1 if single-valued
-            // use integer mode when height is not specified
             self.height.unwrap_or(1 + v_interval.floor() as usize)
         }; // >= 1
-        println!("width:{} height:{}", width, height);
 
         let (label_bot, label_top, v_step) = if height == 1 {
             // if user forced height=1, we need to make label_bot/top accordingly
@@ -209,11 +194,12 @@ impl Args {
             // to indicate the range of values coverd in the plot
             let v_step = v_interval * 1.5; // *1.5 for generouse error range
             (mid, mid, v_step)
+        } else if self.height.is_none() {
+            // use integer mode when height is not specified
+            (v_bot.floor(), v_top.ceil(), 1.)
         } else {
             (v_bot, v_top, v_interval / (height-1) as f64)
         };
-
-        println!("intv:{} step:{}", v_interval, v_step);
 
         let label_bodywidth = {
             let bot_width = 1 + if label_bot < 0. {1} else {0} + label_bot.abs().log10().floor() as usize;
@@ -226,7 +212,6 @@ impl Args {
             (if self.height.is_none() {0} else {1}).max(prec) as usize
             // force prec >= 1 unless height=None (integer mode)
         });
-        println!("<{}>.<{}>", label_bodywidth, label_precision);
 
         let mut cfg = Config {
             symbols: DEFAULT_SYMBOLS, width: width,
@@ -278,40 +263,35 @@ mod tests {
     }
 
     macro_rules! graph_eq {
-        ($testname:ident ? $($ctn:ident.$key:ident = $val:expr),* ; $($series:tt),* => $rhs:expr) => {
-          #[test]
-          fn $testname() {
-            let vss = vec![$((toSeries!($series),9),)*];
-            #[allow(unused_mut)]
-            let mut arg = crate::Args::default();
-            $(set_arg!($ctn, arg, $key, $val);)*
-            #[allow(unused_mut)]
-            let mut cfg = arg.gen_config(&vss).unwrap();
-            $(set_cfg!($ctn, cfg, $key, $val);)*
-            let ret = crate::plot(&vss, cfg);
-            let ref_line_start = if $rhs.chars().next() == Some('\n') {1} else {0};
-            for (line1, line2) in std::iter::zip(ret.lines(), $rhs[ref_line_start..].lines()) {
-              let result = panic::catch_unwind(|| { // this works like try: clause
-                assert_eq!(line1.trim_end(), line2.trim_end());
-              });
-              if result.is_err() { // this works like catch clause
-                // report whole shape when mismatch occures
-                print!("{}", ret);
-                print!("{}", $rhs);
-                panic_any(result.unwrap_err()); // re-raise
-              }
+      ($testname:ident ? $($ctn:ident.$key:ident = $val:expr),* ; $($series:tt),* => $rhs:expr) => {
+        #[test]
+        fn $testname() {
+          let vss = vec![$((toSeries!($series),9),)*];
+          #[allow(unused_mut)]
+          let mut arg = crate::Args::default();
+          $(set_arg!($ctn, arg, $key, $val);)*
+          #[allow(unused_mut)]
+          let mut cfg = arg.gen_config(&vss).unwrap();
+          $(set_cfg!($ctn, cfg, $key, $val);)*
+          let ret = crate::plot(&vss, cfg);
+          let ref_line_start = if $rhs.chars().next() == Some('\n') {1} else {0};
+          for (line1, line2) in std::iter::zip(ret.lines(), $rhs[ref_line_start..].lines()) {
+            let result = panic::catch_unwind(|| { // this works like try: clause
+              assert_eq!(line1.trim_end(), line2.trim_end());
+            });
+            if result.is_err() { // this works like catch clause
+              // report whole shape when mismatch occures
+              print!("{}", ret);
+              print!("{}", $rhs);
+              panic_any(result.unwrap_err()); // re-raise
             }
           }
-        };
-        ($testname:ident ? [$($series:expr),*]  ? $config:expr => $rhs:expr) => {
-          #[test]
-          fn $testname(){
-            let res = plot(vec![$(f64::from($series),)*], $config);
-            assert_eq!(res, $rhs);
-          }
-        };
+        }
+      };
     }
 
+    // test cases borrowed from
+    // https://github.com/kroitor/asciichart/blob/master/asciichartpy/__init__.py
 
     // Missing data values in the series can be specified as a NaN.
     graph_eq!(nan_at_top ? arg.height=4 ; [1,2,3,4,_,4,3,2,1] => "
@@ -484,7 +464,7 @@ mod tests {
    61 ┤ ╰╯││ ╰╯
  -122 ┤   ╰╯     ");
 
-    /*
+    /* TODO interperse feature
     graph_eq!(test_eleven ? height = 5 ; [
         0.3189989805, 0.149949026, 0.30142492354, 0.195129182935, 0.3142492354,
         0.1674974513, 0.3142492354, 0.1474974513, 0.3047974513] => "
@@ -526,7 +506,7 @@ mod tests {
  -8.0 ┤       ╰╯││  ││
  -9.0 ┤         ╰╯  ╰╯ ");
 
-     /*
+    /* TODO interperse feature
     graph_eq!(test_fourteen ? arg.height=5 [
         -0.000018527,-0.021,-0.00123,0.00000021312, -0.0434321234,-0.032413241234,0.0000234234
     ] ?
