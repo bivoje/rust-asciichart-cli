@@ -15,6 +15,7 @@ fn main() {
     let mut datacnt = 0;
 
     let mut last_height = 0;
+    let mut x_start = args.xmin;
 
     let width = args.width.unwrap_or(80);
 
@@ -39,18 +40,29 @@ fn main() {
                 vss[i].0.pop_front();
             }
         }
-        if datacnt > width { datacnt -= 1 };
+        if datacnt > width {
+            datacnt -= 1;
+            if let Some(xstep) = args.xstep {
+              x_start += xstep;
+            }
+        };
 
         if args.monitor {
-            if let Some(cfg) = args.gen_config(&vss) {
+            if let Some(mut cfg) = args.gen_config(&vss) {
+                if let Some(x_label) = cfg.x_label.as_mut() {
+                    x_label.0 = x_start;
+                }
                 let ret = plot(&vss, cfg);
                 print!("\x1b[{}F\x1b[0J{}", last_height, ret.0);
-                last_height = ret.1
+                last_height = ret.1;
             }
         }
     }
 
-    if let Some(cfg) = args.gen_config(&vss) {
+    if let Some(mut cfg) = args.gen_config(&vss) {
+        if let Some(x_label) = cfg.x_label.as_mut() {
+            x_label.0 = x_start;
+        }
         let ret = plot(&vss, cfg);
         if args.monitor {
             print!("\x1b[{}F\x1b[0J", last_height);
