@@ -1,7 +1,7 @@
 [package]
 author = "bivoje <bivoje49@gmail.com>"
 name = "asciichart-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "provides CUI interface for asciichart library"
 licese = "MIT"

@@ -1,6 +1,7 @@
 
 use asciichart_cli::{plot, Args, Parser};
 use std::collections::VecDeque;
+use std::io::Write;
 
 fn main() {
     let args = Args::parse();
@@ -14,7 +15,7 @@ fn main() {
     let mut vss = vec![];
     let mut datacnt = 0;
 
-    let mut last_height = 0;
+    let mut last_height = 1;
     let mut x_start = args.xmin;
 
     let width = args.width.unwrap_or(80);
@@ -52,9 +53,10 @@ fn main() {
                 if let Some(x_label) = cfg.x_label.as_mut() {
                     x_label.0 = x_start;
                 }
-                let ret = plot(&vss, cfg);
-                print!("\x1b[{}F\x1b[0J{}", last_height, ret.0);
-                last_height = ret.1;
+                let (ret, height) = plot(&vss, cfg);
+                print!("\x1b[{}F\x1b[0J{}", last_height-1, &ret[..ret.len()-1]); // removing the last newline
+                std::io::stdout().flush().unwrap();
+                last_height = height;
             }
         }
     }
@@ -65,7 +67,7 @@ fn main() {
         }
         let ret = plot(&vss, cfg);
         if args.monitor {
-            print!("\x1b[{}F\x1b[0J", last_height);
+            print!("\x1b[{}F\x1b[0J", last_height-1);
         }
         print!("{}", ret.0);
     }

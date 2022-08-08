@@ -212,6 +212,12 @@ pub struct Args {
     pub ascii: bool,
 
 
+    // TODO enable using rgb??
+    /// Comma-separated Ansi Color Code for each dataline.
+    /// Colors get cycled if more datalines are comming.
+    //pub colors:
+
+
     /// Repeat drawing the plot for each datarow.
     #[clap(long, value_parser, default_value_t=false)]
     pub monitor: bool,
